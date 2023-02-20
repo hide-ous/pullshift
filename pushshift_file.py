@@ -4,7 +4,7 @@ import queue
 from abc import ABC, abstractmethod
 from time import sleep
 from copy import deepcopy
-from multiprocessing import Queue, RLock, Process, Barrier
+from multiprocessing import Queue, RLock, Process, Barrier, Event
 
 from pushshift_pages import download, extract_archive_links
 
@@ -17,8 +17,9 @@ def decompress(fh):
 
 
 class Reader(ABC, Process):
-    def __init__(self, out_queue: Queue, barrier: Barrier, fpath: str):
+    def __init__(self, out_queue: Queue, barrier: Barrier, fpath: str, stop_event: Event):
         super(Reader, self).__init__()
+        self.stop_event = stop_event
         self.barrier = barrier
         self.out_queue = out_queue
         self.fpath = fpath
@@ -39,13 +40,13 @@ class Reader(ABC, Process):
         print('closing reader')
         try:
             self.barrier.wait()
+            self.stop_event.set()
             self.out_queue.close()
             print('closed reader')
         except Exception as e:
             print('error in closing the barrier')
             print(e)
 
-            pass
 
 class JsonlFileReader(Reader):
     def read(self, **args):
@@ -58,16 +59,27 @@ class ZstdFileReader(JsonlFileReader):
     def read(self, **args):
         with open(self.fpath, 'rb') as fh:
             for line in map(json.loads, decompress(fh)):
-            # for line in decompress(fh):
-                # print(line)
-                # if line.strip():
                 self.forward_item(line)
         print('done reading')
 
 
+class ZstdFileSequenceReader(JsonlFileReader):
+    def __init__(self, out_queue: Queue, barrier: Barrier, fpaths: list[str], stop_event: Event, fpath: str = None):
+        super(ZstdFileSequenceReader, self).__init__(out_queue, barrier, fpath, stop_event)
+        self.fpaths = fpaths
+
+    def read(self, **args):
+        for fpath in self.fpaths:
+            with open(fpath, 'rb') as fh:
+                for line in map(json.loads, decompress(fh)):
+                    self.forward_item(line)
+        print('done reading')
+
+
 class Writer(Process, ABC):
-    def __init__(self, in_queue: Queue, fpath: str):
+    def __init__(self, in_queue: Queue, fpath: str, stop_event: Event):
         super(Writer, self).__init__()
+        self.stop_event = stop_event
         self.fpath = fpath
         self.in_queue = in_queue
 
@@ -79,31 +91,28 @@ class Writer(Process, ABC):
     def close_writer(self):
         pass
 
-    # def collect_items(self):
-    #     try:
-    #         for item in self.in_queue.get():
-    #             self.write(item)
-    #     except ValueError as e:  # queue closed
-    #         pass
-
     def collect_items(self):
-        done=False
-        try:
-            while not done:
+        done = False
+        while not done:
+            try:
                 item = self.in_queue.get(timeout=1)
                 self.write(item)
-        except queue.Empty as e:  # queue closed
-            print('val error', e)
+            except queue.Empty as e:  # queue closed
+                if self.stop_event.is_set():
+                    done = True
+                else:
+                    print('val error in writer', e)
 
     def run(self):
         self.collect_items()
         self.close_writer()
         self.close()
 
+
 class JsonlFileWriter(Writer):
 
-    def __init__(self, in_queue: Queue, fpath: str):
-        super(JsonlFileWriter, self).__init__(in_queue, fpath)
+    def __init__(self, in_queue: Queue, fpath: str, stop_event: Event):
+        super(JsonlFileWriter, self).__init__(in_queue, fpath, stop_event)
 
     def write(self, item, **args):
         self.fhandle.write(json.dumps(item) + '\n')
@@ -120,7 +129,8 @@ class JsonlFileWriter(Writer):
 
 
 class MultiJsonlFileWriter(JsonlFileWriter):
-    def __init__(self, in_queue: Queue, fpaths_and_filters: dict, multiple_writes_per_item: bool = False):
+    def __init__(self, in_queue: Queue, stop_event: Event, fpaths_and_filters: dict, multiple_writes_per_item: bool = False):
+        self.stop_event = stop_event
         self.multiple_writes_per_item = multiple_writes_per_item
         self.fpaths_and_filters = deepcopy(fpaths_and_filters)
         self.fhandles = {k: open(k, 'a+', encoding="utf8") for k in fpaths_and_filters}
@@ -141,12 +151,12 @@ class MultiJsonlFileWriter(JsonlFileWriter):
 def main():
     fin = 'E:\\pushshift\\RS_2005-12.zst'
     fin2 = 'E:\\pushshift\\RS_2006-01.zst'
-    fout = 'E:\\pushshift\\RS_2005-12.jsonl'
-    q= Queue()
-    b=Barrier(2)
-    rp=ZstdFileReader(out_queue=q, barrier=b, fpath=fin)
-    rp2=ZstdFileReader(out_queue=q, barrier=b, fpath=fin2)
-    wp=JsonlFileWriter(in_queue=q, fpath=fout)
+    fout = 'E:\\pushshift\\RS_test.jsonl'
+    q = Queue()
+    b = Barrier(2)
+    rp = ZstdFileReader(out_queue=q, barrier=b, fpath=fin)
+    rp2 = ZstdFileReader(out_queue=q, barrier=b, fpath=fin2)
+    wp = JsonlFileWriter(in_queue=q, fpath=fout, stop_event=stop)
     # rp=Process(target=r.read)
     # wp = Process(target=w.collect_items)
     rp.start()

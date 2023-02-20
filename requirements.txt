@@ -2,3 +2,7 @@ requests~=2.28.1
 tqdm~=4.64.1
 lxml~=4.9.1
 zstandard~=0.19.0
+spacy~=3.5.0
+beautifulsoup4~=4.11.2
+Markdown~=3.4.1
+urllib3~=1.26.14

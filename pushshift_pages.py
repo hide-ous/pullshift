@@ -120,8 +120,8 @@ if __name__ == '__main__':
     max_date = datetime.date(2018, 12, 1)
     base_store_path = 'E:\\pushshift'
     # urls = []
-    # for contribution_type in ['comments']:
-    for contribution_type in CONTRIBUTION_TYPES:
+    for contribution_type in ['submissions']:
+    # for contribution_type in CONTRIBUTION_TYPES:
         for url in filter(lambda url: min_date <= date(url) <= max_date,
                           extract_archive_links(contribution_type)):
             # urls.append(url)

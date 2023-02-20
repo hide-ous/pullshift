@@ -4,6 +4,10 @@ Download and extract data from [Pushshift's](https://files.pushshift.io/reddit) 
 
 ## *This project is WIP*
 
+## Installation
+- `pip install -r requirements.txt`
+- `python -m spacy download en_core_web_lg`
+
 ### TODO:
 - [ ] parallelize downloads
   - [ ] fix tqdm for parallel downloads

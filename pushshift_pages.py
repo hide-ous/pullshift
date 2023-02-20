@@ -1,5 +1,7 @@
 import datetime
 import os.path
+from multiprocessing import freeze_support, RLock
+from multiprocessing.pool import Pool
 from urllib.parse import urljoin, urlsplit
 
 import requests
@@ -71,24 +73,33 @@ def stream(url):
     return response.raw
 
 
-def download(url, store_path, chunk_size=1024 ** 2, overwrite=False, retry_times=3):
+def download(url, store_path, chunk_size=1024 ** 2, overwrite=False, retry_times=3, pid=1):
     if (not overwrite) and os.path.exists(store_path):
         print(f'skipping {url} as it already exists in {store_path}. Set `overwrite=True to download anyway.`')
         return
     response = requests.get(url, stream=True)
 
     total_size = int(response.headers['Content-Length'])
-    chunk_iterator = tqdm.tqdm(response.iter_content(chunk_size=chunk_size),
-                               "downloading " + url + " to " + store_path,
-                               int(total_size / chunk_size))
+    # chunk_iterator = tqdm.tqdm(response.iter_content(chunk_size=chunk_size),
+    #                            desc="downloading " + url + " to " + store_path,
+    #                            total=int(total_size / chunk_size),
+    #                            position=pid+1)
     try:
         with open(store_path, "wb+") as out_file:
-            for chunk in chunk_iterator:
-                out_file.write(chunk)
+            with tqdm.tqdm(desc="downloading " + url + " to " + store_path,
+                           total=int(total_size / chunk_size),
+                           # position=pid
+                           ) as pbar:
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    out_file.write(chunk)
+                    pbar.update(1)
     except (ChunkedEncodingError, IncompleteRead, ProtocolError) as e:
         print(e)
         if retry_times - 1 > 0:
             download(url, store_path, chunk_size=chunk_size, overwrite=True, retry_times=retry_times - 1)
+        else:
+            if os.path.exists(store_path):
+                os.remove(store_path)
 
 
 def to_fname(url):
@@ -96,11 +107,44 @@ def to_fname(url):
     return os.path.split(url_path)[-1]
 
 
+def _download(args):
+    return download(**args)
+
+
 if __name__ == '__main__':
+
+    freeze_support()  # For Windows support
+
     min_date = datetime.date(2005, 12, 1)
-    max_date = datetime.date(2016, 12, 1)
+    # max_date = datetime.date(2006, 12, 1)
+    max_date = datetime.date(2018, 12, 1)
     base_store_path = 'E:\\pushshift'
+    # urls = []
+    # for contribution_type in ['comments']:
     for contribution_type in CONTRIBUTION_TYPES:
         for url in filter(lambda url: min_date <= date(url) <= max_date,
                           extract_archive_links(contribution_type)):
+            # urls.append(url)
             download(url, os.path.join(base_store_path, to_fname(url)))
+    # poo = Pool(processes=3, initargs=(RLock(),), initializer=tqdm.tqdm.set_lock)
+    #
+    # jobs = [poo.apply_async(download, args=(url,
+    #                                          os.path.join(base_store_path, to_fname(url)),
+    #                                          1024 ** 2,
+    #                                          False,
+    #                                          3,
+    #                                          i
+    #                                          )) for i, url in enumerate(urls)]
+    # poo.close()
+    # result_list = [job.get() for job in jobs]
+    #
+    # # poo.map(_download, map(lambda url: dict(url=url[1],
+    # #                                         store_path=os.path.join(base_store_path, to_fname(url[1])),
+    # #                                         overwrite=False,
+    # #                                         retry_times=3,
+    # #                                         pid=url[0]
+    # #                                         ),
+    # #                        enumerate(urls)))
+    # # poo.close()
+    # # poo.join()
+    # print('bye')

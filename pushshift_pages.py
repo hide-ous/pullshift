@@ -77,7 +77,8 @@ def download(url, store_path, chunk_size=1024 ** 2, overwrite=False, retry_times
     if (not overwrite) and os.path.exists(store_path):
         print(f'skipping {url} as it already exists in {store_path}. Set `overwrite=True to download anyway.`')
         return
-    response = requests.get(url, stream=True)
+    headers={'User-Agent':"pullshift v0.0.1 by u/hide-ous"}
+    response = requests.get(url, stream=True, headers=headers)
 
     total_size = int(response.headers['Content-Length'])
     # chunk_iterator = tqdm.tqdm(response.iter_content(chunk_size=chunk_size),
@@ -120,7 +121,7 @@ if __name__ == '__main__':
     max_date = datetime.date(2018, 12, 1)
     base_store_path = 'E:\\pushshift'
     # urls = []
-    for contribution_type in ['submissions']:
+    for contribution_type in ['comments']:
     # for contribution_type in CONTRIBUTION_TYPES:
         for url in filter(lambda url: min_date <= date(url) <= max_date,
                           extract_archive_links(contribution_type)):

@@ -2,9 +2,12 @@ import io
 import json
 import queue
 from abc import ABC, abstractmethod
+from json import JSONDecodeError
 from time import sleep
 from copy import deepcopy
 from multiprocessing import Queue, RLock, Process, Barrier, Event
+
+from tqdm import tqdm
 
 from pushshift_pages import download, extract_archive_links
 
@@ -51,28 +54,35 @@ class Reader(ABC, Process):
 class JsonlFileReader(Reader):
     def read(self, **args):
         with open(self.fpath) as f:
-            for l in f:
-                self.forward_item(json.loads(l))
+            for line in f:
+                if (line is not None) and len(line.strip()):
+                    self.forward_item(json.loads(line))
 
 
 class ZstdFileReader(JsonlFileReader):
     def read(self, **args):
         with open(self.fpath, 'rb') as fh:
-            for line in map(json.loads, decompress(fh)):
-                self.forward_item(line)
-        print('done reading')
+            for line in decompress(fh):
+                try:
+                    self.forward_item(json.loads(line))
+                except JSONDecodeError as e:
+                    print(f"error in {self.fpath}")
+                    print(e)
 
 
-class ZstdFileSequenceReader(JsonlFileReader):
+class ZstdFileSequenceReader(ZstdFileReader):
     def __init__(self, out_queue: Queue, barrier: Barrier, fpaths: list[str], stop_event: Event, fpath: str = None):
         super(ZstdFileSequenceReader, self).__init__(out_queue, barrier, fpath, stop_event)
         self.fpaths = fpaths
 
     def read(self, **args):
-        for fpath in self.fpaths:
-            with open(fpath, 'rb') as fh:
-                for line in map(json.loads, decompress(fh)):
-                    self.forward_item(line)
+        for fpath in (pbar := tqdm(self.fpaths)):
+            pbar.set_description(f"reading {fpath}")
+            self.fpath=fpath
+            super(ZstdFileSequenceReader, self).read()
+            # with open(fpath, 'rb') as fh:
+            #     for line in map(json.loads, decompress(fh)):
+            #         self.forward_item(line)
         print('done reading')
 
 
@@ -101,7 +111,7 @@ class Writer(Process, ABC):
                 if self.stop_event.is_set():
                     done = True
                 else:
-                    print('val error in writer', e)
+                    pass
 
     def run(self):
         self.collect_items()
@@ -115,7 +125,7 @@ class JsonlFileWriter(Writer):
         super(JsonlFileWriter, self).__init__(in_queue, fpath, stop_event)
 
     def write(self, item, **args):
-        self.fhandle.write(json.dumps(item) + '\n')
+        self.fhandle.write(json.dumps(item, sort_keys=True) + '\n')
 
     def close_writer(self):
         print('closing writer')
@@ -139,7 +149,7 @@ class MultiJsonlFileWriter(JsonlFileWriter):
     def write(self, item, **args):
         for k, f in self.fpaths_and_filters.items():
             if f(item):
-                self.fhandles[k].write(json.dumps + '\n')
+                self.fhandles[k].write(json.dumps(item, sort_keys=True) + '\n')
                 if not self.multiple_writes_per_item:
                     break
 
@@ -154,11 +164,11 @@ def main():
     fout = 'E:\\pushshift\\RS_test.jsonl'
     q = Queue()
     b = Barrier(2)
-    rp = ZstdFileReader(out_queue=q, barrier=b, fpath=fin)
-    rp2 = ZstdFileReader(out_queue=q, barrier=b, fpath=fin2)
+    stop = Event()
+    rp = ZstdFileReader(out_queue=q, barrier=b, fpath=fin, stop_event=stop)
+    rp2 = ZstdFileReader(out_queue=q, barrier=b, fpath=fin2, stop_event=stop)
     wp = JsonlFileWriter(in_queue=q, fpath=fout, stop_event=stop)
-    # rp=Process(target=r.read)
-    # wp = Process(target=w.collect_items)
+
     rp.start()
     rp2.start()
     wp.start()
@@ -171,9 +181,5 @@ def main():
 
 
 if __name__ == '__main__':
-    # link = 'https://files.pushshift.io/reddit/submissions/RS_2005-06.zst'
-    # download(link, 'test.zst')
-    # with open('test.zst', 'rb') as fh:
-    #     for line in map(json.loads, decompress(fh)):
-    #         print(line)
+
     main()

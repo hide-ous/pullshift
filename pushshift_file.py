@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import queue
 from abc import ABC, abstractmethod
 from json import JSONDecodeError
@@ -76,10 +77,17 @@ class ZstdFileSequenceReader(ZstdFileReader):
         self.fpaths = fpaths
 
     def read(self, **args):
-        for fpath in (pbar := tqdm(self.fpaths)):
+        size_file = list(zip(map(lambda f: os.stat(f).st_size, self.fpaths), self.fpaths))
+
+        total_size = sum(size for size, _ in size_file)
+        # size_file = [(size/total_size*100, fpath) for size, fpath in size_file]
+        size_file = [(size / (total_size * len(size_file)
+                              ), fpath) for size, fpath in size_file]
+        for size, fpath in (pbar := tqdm(size_file)): # the total in terms of file size is not recognized
             pbar.set_description(f"reading {fpath}")
             self.fpath=fpath
             super(ZstdFileSequenceReader, self).read()
+            pbar.update(size)
             # with open(fpath, 'rb') as fh:
             #     for line in map(json.loads, decompress(fh)):
             #         self.forward_item(line)

@@ -144,7 +144,7 @@ def main():
 
     # print(base_path, fname, fout)
     # sys.exit()
-    q_to_process = Queue(maxsize=100000)
+    q_to_process = Queue(maxsize=10000)
     q_from_process = Queue()
     stop_writer = Event()
     stop_process = Event()

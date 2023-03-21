@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from json import JSONDecodeError
 from time import sleep
 from copy import deepcopy
-from multiprocessing import Queue, RLock, Process, Barrier, Event
+from multiprocessing import Queue, RLock, Process, Barrier, Event, Pool
 
 from tqdm import tqdm
 
@@ -78,21 +78,46 @@ class ZstdFileSequenceReader(ZstdFileReader):
 
     def read(self, **args):
         size_file = list(zip(map(lambda f: os.stat(f).st_size, self.fpaths), self.fpaths))
-
+        NORM_FACTOR = 2**20
         total_size = sum(size for size, _ in size_file)
-        # size_file = [(size/total_size*100, fpath) for size, fpath in size_file]
-        size_file = [(size / (total_size * len(size_file)
-                              ), fpath) for size, fpath in size_file]
-        for size, fpath in (pbar := tqdm(size_file)): # the total in terms of file size is not recognized
-            pbar.set_description(f"reading {fpath}")
-            self.fpath=fpath
-            super(ZstdFileSequenceReader, self).read()
-            pbar.update(size)
-            # with open(fpath, 'rb') as fh:
-            #     for line in map(json.loads, decompress(fh)):
-            #         self.forward_item(line)
+        size_file = [(size, fpath) for size, fpath in size_file]
+        # size_file = [(size / (total_size * len(size_file)
+        #                       ), fpath) for size, fpath in size_file]
+        processed = 0
+        with tqdm(size_file, total=total_size//NORM_FACTOR, unit="MB") as pbar:
+            for size, fpath in pbar: # the total in terms of file size is not recognized
+                pbar.set_description(f"reading {fpath}")
+                self.fpath=fpath
+                super(ZstdFileSequenceReader, self).read()
+                old_processed = processed
+                processed +=size
+                pbar.update((processed-old_processed)//NORM_FACTOR)
+                # with open(fpath, 'rb') as fh:
+                #     for line in map(json.loads, decompress(fh)):
+                #         self.forward_item(line)
         print('done reading')
 
+def spawn_zstd_file_reader(args):
+    fpath, q, stop_event = args
+    b = Barrier(1)
+    rp = ZstdFileReader(out_queue=q, barrier=b, fpath=fpath, stop_event=stop_event)
+    rp.start()
+    return stop_event
+
+class ZstdFileParallelReader(ZstdFileReader):
+    def __init__(self, out_queue: Queue, barrier: Barrier, fpaths: list[str], stop_event: Event, fpath: str = None, nthreads=10):
+        super(ZstdFileSequenceReader, self).__init__(out_queue, barrier, fpath, stop_event)
+        self.fpaths = fpaths
+        self.pool = Pool(processes=nthreads)
+
+    def read(self, **args):
+        args = [(fpath, self.out_queue, Event()) for fpath in self.fpaths]
+        events = self.pool.imap_unordered(spawn_zstd_file_reader, args)
+
+
+    def close_reader(self):
+        self.pool.close()
+        super().close_reader()
 
 class Writer(Process, ABC):
     def __init__(self, in_queue: Queue, fpath: str, stop_event: Event):
@@ -167,22 +192,25 @@ class MultiJsonlFileWriter(JsonlFileWriter):
 
 
 def main():
-    fin = 'E:\\pushshift\\RS_2005-12.zst'
-    fin2 = 'E:\\pushshift\\RS_2006-01.zst'
+    fin = 'E:\\pushshift\\RS_2015-12.zst'
+    fin2 = 'E:\\pushshift\\RS_2016-01.zst'
     fout = 'E:\\pushshift\\RS_test.jsonl'
     q = Queue()
-    b = Barrier(2)
+    b = Barrier(1)
     stop = Event()
-    rp = ZstdFileReader(out_queue=q, barrier=b, fpath=fin, stop_event=stop)
-    rp2 = ZstdFileReader(out_queue=q, barrier=b, fpath=fin2, stop_event=stop)
+    # rp = ZstdFileReader(out_queue=q, barrier=b, fpath=fin, stop_event=stop)
+    # rp2 = ZstdFileReader(out_queue=q, barrier=b, fpath=fin2, stop_event=stop)
+    rpp = ZstdFileSequenceReader(out_queue=q, barrier=b, fpaths=[f'E:\\pushshift\\RS_2012-{m:02d}.zst' for m in range(1, 13)], stop_event=stop)
     wp = JsonlFileWriter(in_queue=q, fpath=fout, stop_event=stop)
 
-    rp.start()
-    rp2.start()
+    # rp.start()
+    # rp2.start()
+    rpp.start()
     wp.start()
 
-    rp.join()
-    rp2.join()
+    # rp.join()
+    # rp2.join()
+    rpp.join()
     wp.join()
 
     print('finished!')

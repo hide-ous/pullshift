@@ -40,7 +40,8 @@ class Reader(ABC, Process):
         try:
             self.stop_event.set()
             # self.out_queue.close()
-            print('closed reader')
+            if self.fpath:
+                print(f'closed {self.fpath}')
         except Exception as e:
             print('error in closing the barrier')
             print(e)
@@ -60,7 +61,7 @@ class JsonlFileReader(Reader):
 
 class ZstdFileReader(JsonlFileReader):
     def read(self, **args):
-        print("reading")
+        print(f"reading {self.fpath}")
         with open(self.fpath, 'rb') as fh:
             for line in decompress(fh):
                 try:

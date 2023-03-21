@@ -1,11 +1,10 @@
 import os
 import queue
-import sys
 from abc import ABC, abstractmethod
-from multiprocessing import Process, Queue, Barrier, Event, Manager
+from multiprocessing import Process, Queue, Event, Manager
 
 from preprocess_text import doc2token
-from pushshift_file import JsonlFileWriter, ZstdFileParallelReader
+from pushshift_file import JsonlFileWriter, ZstdFileParallelReader, ZstdFileReader
 
 from dotenv import load_dotenv
 
@@ -37,14 +36,6 @@ class Processor(ABC, Process):
 
     def close_processor(self):
         self.stop_event_out.set()
-        # try:
-        #     self.barrier.wait()
-        #     self.stop_event_out.set()
-        #     self.qout.close()
-        # except Exception as e:
-        #     print('error in closing the barrier in processor')
-        #     print(e)
-
 
     def run(self) -> None:
         self.process_items()
@@ -73,13 +64,10 @@ def normalize_text(item: dict):
 
     if contribution_type in set(['selftext_submission', 'link_submission']):
         item['fullname'] = "t3_" + item.pop('id')
-    elif contribution_type == 'comment':
-        item['fullname'] = "t1_" + item.pop('id')
-
-    if contribution_type in set(['selftext_submission', 'link_submission']):
         item['parent_fullname'] = None
         item['link_fullname'] = item['fullname']
     elif contribution_type == 'comment':
+        item['fullname'] = "t1_" + item.pop('id')
         item['parent_fullname'] = item.pop('parent_id')
         item['link_fullname'] = item.pop('link_id')
     return item
@@ -120,56 +108,37 @@ class Pipeline(Processor):
                 item = func(item, **args)
         return item
 
-
-def main():
-    load_dotenv()
-    base_path = os.environ['base_path']
-
-    # read allowed subreddits
-    subreddit_fname = os.environ['subreddit_fname']
-    subs = list()
-    with open(subreddit_fname, encoding='utf8') as f:
-        for l in f:
-            subs.append(l.split('\t')[0])
-    subs=set(subs)
-
+def go(fins,fout,funcs,n_readers=20, n_processors = 10,queue_size=10 ** 6):
     # set up readers
-    fins = [os.path.join(base_path, f"RS_{year}-{month:02}.zst") for year in range(2005, 2007) for month in range(1, 13)
-            if not ((year==2005) and (month != 12))]
     m = Manager()
-    q_to_process = m.Queue()
-    reader = ZstdFileParallelReader(out_queue=q_to_process, fpaths=fins, nthreads=20)
+    q_to_process = m.Queue(maxsize=queue_size)
+    q_from_process = m.Queue()
+    readers = [ZstdFileParallelReader(out_queue=q_to_process, fpaths=fins, nthreads=n_readers)]
+    # q_to_process = Queue(maxsize=queue_size)
+    # q_from_process = Queue()
+    # readers = [ZstdFileReader(out_queue=q_to_process, fpath=fin) for fin in fins]
 
     # set up processors
-    q_from_process = m.Queue()
-    n_processors = 10
-    funcs = [ # extract and normalize titles of submissions only
-        (keep_contribution, dict(fields_and_values={"subreddit":subs})),
-        (keep_fields, {'fields': set(['id', 'subreddit', 'title'])}),
-        (clean_text, dict(text_field='title',
-                          remove_punct=True, remove_digit=True, remove_stops=False, remove_pron=False,
-                          lemmatize=False, lowercase=True
-                          ))
-    ]
     processors = [Pipeline(q_to_process, q_from_process, funcs=funcs)
                   for _ in range(n_processors)]
 
     # set up writer
-    fout = os.environ['fout']
     wp = JsonlFileWriter(in_queue=q_from_process, fpath=fout)
 
     # start everything
-    reader.start()
+    for reader in readers:
+        reader.start()
     for processor in processors:
         processor.start()
     wp.start()
 
-    # wait for readers to stop
-    reader.join()
+    # wait for readers to stop and signal processors
+    for reader in readers:
+        reader.join()
     for processor in processors:
         processor.stop()
 
-    # wait for processors to stop
+    # wait for processors to stop and signal writer
     for processor in processors:
         processor.join()
     wp.stop()
@@ -177,6 +146,46 @@ def main():
 
     print('finished!')
 
+
+def main():
+    subs = ['climateskeptics', 'climatechange', 'science', 'conspiracy', 'conservative', 'moonhoax',
+            'flatearth', 'nasa']
+    funcs = [(keep_contribution, dict(fields_and_values={"subreddit": subs}))]
+    base_path = "E:\\pushshift"
+    fins = [os.path.join(base_path, f"RS_{year}-{month:02}.zst") for year in range(2009, 2010) for month in range(1, 13)
+            if not ((year==2005) and (month != 12))]
+    fout = "F:\\conspiracy_filtered.jsonl"
+
+    go(fins=fins,fout=fout,funcs=funcs)
+
+
+    # load_dotenv()
+    # base_path = os.environ['base_path']
+    #
+    # # set up processing functions
+    # subreddit_fname = os.environ['subreddit_fname']
+    # subs = list()
+    # with open(subreddit_fname, encoding='utf8') as f:
+    #     for l in f:
+    #         subs.append(l.split('\t')[0])
+    # subs=set(subs)
+    # funcs = [
+    #     (keep_contribution, dict(fields_and_values={"subreddit":subs})),
+    #     (keep_fields, {'fields': set(['id', 'subreddit', 'title'])}),
+    #     (clean_text, dict(text_field='title',
+    #                       remove_punct=True, remove_digit=True, remove_stops=False, remove_pron=False,
+    #                       lemmatize=False, lowercase=True
+    #                       ))
+    # ]
+    #
+    # queue_size = 10 ** 6
+    # fout = os.environ['fout']
+    # fins = [os.path.join(base_path, f"RS_{year}-{month:02}.zst") for year in range(2009, 2010) for month in range(1, 13)
+    #         if not ((year==2005) and (month != 12))]
+    # n_processors = 10
+    # n_readers = 20
+    #
+    # go(fins=fins,fout=fout,funcs=funcs,n_readers=n_readers,n_processors=n_processors,queue_size=queue_size)
 
 if __name__ == '__main__':
     main()

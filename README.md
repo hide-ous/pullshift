@@ -1,6 +1,7 @@
 # pullshift
+Like [Pushshift's](https://github.com/pushshift/api), but slower and not in the cloud.
 
-Download and extract data from [Pushshift's](https://files.pushshift.io/reddit) archive files.
+Download and extract data from Pushshift's [archive files](https://files.pushshift.io/reddit).
 
 ## *This project is WIP*
 

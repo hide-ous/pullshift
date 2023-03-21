@@ -4,9 +4,8 @@ import os
 import queue
 from abc import ABC, abstractmethod
 from json import JSONDecodeError
-from time import sleep
 from copy import deepcopy
-from multiprocessing import Queue, RLock, Process, Barrier, Event, Pool
+from multiprocessing import Queue, RLock, Process, Barrier, Event, Pool, Manager
 
 from tqdm import tqdm
 
@@ -21,10 +20,9 @@ def decompress(fh):
 
 
 class Reader(ABC, Process):
-    def __init__(self, out_queue: Queue, barrier: Barrier, fpath: str, stop_event: Event):
+    def __init__(self, out_queue: Queue, fpath: str):
         super(Reader, self).__init__()
-        self.stop_event = stop_event
-        self.barrier = barrier
+        self.stop_event = Event()
         self.out_queue = out_queue
         self.fpath = fpath
 
@@ -43,13 +41,16 @@ class Reader(ABC, Process):
     def close_reader(self):
         print('closing reader')
         try:
-            self.barrier.wait()
             self.stop_event.set()
-            self.out_queue.close()
+            # self.out_queue.close()
             print('closed reader')
         except Exception as e:
             print('error in closing the barrier')
             print(e)
+    def join(self, timeout: float | None = None) -> None:
+        self.stop_event.wait(timeout=timeout)
+
+
 
 
 class JsonlFileReader(Reader):
@@ -62,6 +63,7 @@ class JsonlFileReader(Reader):
 
 class ZstdFileReader(JsonlFileReader):
     def read(self, **args):
+        print("reading")
         with open(self.fpath, 'rb') as fh:
             for line in decompress(fh):
                 try:
@@ -97,32 +99,50 @@ class ZstdFileSequenceReader(ZstdFileReader):
                 #         self.forward_item(line)
         print('done reading')
 
-def spawn_zstd_file_reader(args):
-    fpath, q, stop_event = args
-    b = Barrier(1)
-    rp = ZstdFileReader(out_queue=q, barrier=b, fpath=fpath, stop_event=stop_event)
-    rp.start()
-    return stop_event
+# def spawn_zstd_file_reader(args):
+#     fpath, q = args
+#     rp = ZstdFileReader(out_queue=q, fpath=fpath)
+#     rp.daemon = False
+#     rp.start()
+#     return rp
+
+def zstd_read(args):
+    fpath, q = args
+    print(f'processing {fpath}')
+    with open(fpath, 'rb') as fh:
+        for line in decompress(fh):
+            try:
+                q.put(json.loads(line))
+            except JSONDecodeError as e:
+                print(f"error in {fpath}")
+                print(e)
 
 class ZstdFileParallelReader(ZstdFileReader):
-    def __init__(self, out_queue: Queue, barrier: Barrier, fpaths: list[str], stop_event: Event, fpath: str = None, nthreads=10):
-        super(ZstdFileSequenceReader, self).__init__(out_queue, barrier, fpath, stop_event)
+    def __init__(self, out_queue: Queue, fpaths: list[str], nthreads: int = 10, fpath: str = None):
+        super(ZstdFileParallelReader, self).__init__(out_queue, fpath)
         self.fpaths = fpaths
-        self.pool = Pool(processes=nthreads)
+        self.nthreads=nthreads
+        # self.daemon=False
 
     def read(self, **args):
-        args = [(fpath, self.out_queue, Event()) for fpath in self.fpaths]
-        events = self.pool.imap_unordered(spawn_zstd_file_reader, args)
+        with Pool(self.nthreads) as pool:
+            # pool = Pool(processes=self.nthreads)
+            args = [(fpath, self.out_queue) for fpath in self.fpaths]
+            _ = pool.map(zstd_read, args)
 
 
-    def close_reader(self):
-        self.pool.close()
-        super().close_reader()
-
+            # pool.join()
+    # def __getstate__(self):
+    #     self_dict = self.__dict__.copy()
+    #     del self_dict['pool']
+    #     return self_dict
+    #
+    # def __setstate__(self, state):
+    #     self.__dict__.update(state)
 class Writer(Process, ABC):
-    def __init__(self, in_queue: Queue, fpath: str, stop_event: Event):
+    def __init__(self, in_queue: Queue, fpath: str):
         super(Writer, self).__init__()
-        self.stop_event = stop_event
+        self.stop_event = Event()
         self.fpath = fpath
         self.in_queue = in_queue
 
@@ -136,26 +156,37 @@ class Writer(Process, ABC):
 
     def collect_items(self):
         done = False
-        while not done:
-            try:
-                item = self.in_queue.get(timeout=1)
-                self.write(item)
-            except queue.Empty as e:  # queue closed
-                if self.stop_event.is_set():
-                    done = True
-                else:
-                    pass
+        with tqdm() as pbar:
+            while not done:
+                try:
+                    item = self.in_queue.get(timeout=1)
+                    # print(item)
+                    self.write(item)
+                    pbar.update(1)
+                except queue.Empty as e:  # queue closed
+                    if self.stop_event.is_set():
+                        done = True
+                    else:
+                        pass
 
     def run(self):
         self.collect_items()
         self.close_writer()
         self.close()
 
+    def stop(self):
+        self.stop_event.set()
+
+class DummyWriter(Writer):
+    def close_writer(self):
+        pass
+    def write(self, item, **args):
+        pass
 
 class JsonlFileWriter(Writer):
 
-    def __init__(self, in_queue: Queue, fpath: str, stop_event: Event):
-        super(JsonlFileWriter, self).__init__(in_queue, fpath, stop_event)
+    def __init__(self, in_queue: Queue, fpath: str):
+        super(JsonlFileWriter, self).__init__(in_queue, fpath)
 
     def write(self, item, **args):
         self.fhandle.write(json.dumps(item, sort_keys=True) + '\n')
@@ -172,8 +203,8 @@ class JsonlFileWriter(Writer):
 
 
 class MultiJsonlFileWriter(JsonlFileWriter):
-    def __init__(self, in_queue: Queue, stop_event: Event, fpaths_and_filters: dict, multiple_writes_per_item: bool = False):
-        self.stop_event = stop_event
+    def __init__(self, in_queue: Queue, fpaths_and_filters: dict, multiple_writes_per_item: bool = False):
+        self.stop_event = Event()
         self.multiple_writes_per_item = multiple_writes_per_item
         self.fpaths_and_filters = deepcopy(fpaths_and_filters)
         self.fhandles = {k: open(k, 'a+', encoding="utf8") for k in fpaths_and_filters}
@@ -192,29 +223,40 @@ class MultiJsonlFileWriter(JsonlFileWriter):
 
 
 def main():
-    fin = 'E:\\pushshift\\RS_2015-12.zst'
-    fin2 = 'E:\\pushshift\\RS_2016-01.zst'
+    fin = 'E:\\pushshift\\RS_2006-12.zst'
+    fin2 = 'E:\\pushshift\\RS_2006-01.zst'
     fout = 'E:\\pushshift\\RS_test.jsonl'
     q = Queue()
-    b = Barrier(1)
-    stop = Event()
-    # rp = ZstdFileReader(out_queue=q, barrier=b, fpath=fin, stop_event=stop)
-    # rp2 = ZstdFileReader(out_queue=q, barrier=b, fpath=fin2, stop_event=stop)
-    rpp = ZstdFileSequenceReader(out_queue=q, barrier=b, fpaths=[f'E:\\pushshift\\RS_2012-{m:02d}.zst' for m in range(1, 13)], stop_event=stop)
-    wp = JsonlFileWriter(in_queue=q, fpath=fout, stop_event=stop)
 
-    # rp.start()
-    # rp2.start()
+    rp = ZstdFileReader(out_queue=q, fpath=fin)
+    rp2 = ZstdFileReader(out_queue=q, fpath=fin2)
+    # wp = JsonlFileWriter(in_queue=q, fpath=fout)
+    wp=DummyWriter(in_queue=q, fpath=fout)
+    rp.start()
+    rp2.start()
+    wp.start()
+
+    rp.join() # wait for all readers to finish
+    rp2.join()
+    wp.stop()
+    wp.join()
+
+    print('finished with two processes')
+
+    fout = 'E:\\pushshift\\RS_test.jsonl'
+    m = Manager()
+    q = m.Queue()
+    rpp=ZstdFileParallelReader(out_queue=q, fpaths=[f'E:\\pushshift\\RS_2009-{m:02d}.zst' for m in range(1, 13)], nthreads=20)
+    # wp = JsonlFileWriter(in_queue=q, fpath=fout)
+    wp=DummyWriter(in_queue=q, fpath=fout)
     rpp.start()
     wp.start()
 
-    # rp.join()
-    # rp2.join()
     rpp.join()
+    wp.stop()
     wp.join()
 
-    print('finished!')
-
+    print('finished in parallel')
 
 if __name__ == '__main__':
 

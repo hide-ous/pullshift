@@ -110,13 +110,15 @@ class Pipeline(Processor):
 
 def go(fins,fout,funcs,n_readers=20, n_processors = 10,queue_size=10 ** 6):
     # set up readers
-    m = Manager()
-    q_to_process = m.Queue(maxsize=queue_size)
-    q_from_process = m.Queue()
-    readers = [ZstdFileParallelReader(out_queue=q_to_process, fpaths=fins, nthreads=n_readers)]
-    # q_to_process = Queue(maxsize=queue_size)
-    # q_from_process = Queue()
-    # readers = [ZstdFileReader(out_queue=q_to_process, fpath=fin) for fin in fins]
+    if n_readers>1:
+        m = Manager()
+        q_to_process = m.Queue(maxsize=queue_size)
+        q_from_process = m.Queue()
+        readers = [ZstdFileParallelReader(out_queue=q_to_process, fpaths=fins, nthreads=n_readers)]
+    else:
+        q_to_process = Queue(maxsize=queue_size)
+        q_from_process = Queue()
+        readers = [ZstdFileReader(out_queue=q_to_process, fpath=fin) for fin in fins]
 
     # set up processors
     processors = [Pipeline(q_to_process, q_from_process, funcs=funcs)
@@ -148,44 +150,52 @@ def go(fins,fout,funcs,n_readers=20, n_processors = 10,queue_size=10 ** 6):
 
 
 def main():
-    subs = ['climateskeptics', 'climatechange', 'science', 'conspiracy', 'conservative', 'moonhoax',
-            'flatearth', 'nasa']
-    funcs = [(keep_contribution, dict(fields_and_values={"subreddit": subs}))]
-    base_path = "E:\\pushshift"
-    fins = [os.path.join(base_path, f"RS_{year}-{month:02}.zst") for year in range(2009, 2010) for month in range(1, 13)
-            if not ((year==2005) and (month != 12))]
-    fout = "F:\\conspiracy_filtered.jsonl"
-
-    go(fins=fins,fout=fout,funcs=funcs)
-
-
-    # load_dotenv()
-    # base_path = os.environ['base_path']
-    #
-    # # set up processing functions
-    # subreddit_fname = os.environ['subreddit_fname']
-    # subs = list()
-    # with open(subreddit_fname, encoding='utf8') as f:
-    #     for l in f:
-    #         subs.append(l.split('\t')[0])
-    # subs=set(subs)
-    # funcs = [
-    #     (keep_contribution, dict(fields_and_values={"subreddit":subs})),
-    #     (keep_fields, {'fields': set(['id', 'subreddit', 'title'])}),
-    #     (clean_text, dict(text_field='title',
-    #                       remove_punct=True, remove_digit=True, remove_stops=False, remove_pron=False,
-    #                       lemmatize=False, lowercase=True
-    #                       ))
-    # ]
-    #
-    # queue_size = 10 ** 6
-    # fout = os.environ['fout']
-    # fins = [os.path.join(base_path, f"RS_{year}-{month:02}.zst") for year in range(2009, 2010) for month in range(1, 13)
+    # subs = ['climateskeptics', 'climatechange', 'science', 'conspiracy', 'conservative', 'moonhoax',
+    #         'flatearth', 'nasa']
+    # funcs = [(keep_contribution, dict(fields_and_values={"subreddit": subs}))]
+    # base_path = "E:\\pushshift"
+    # fins = [os.path.join(base_path, f"RS_{year}-{month:02}.zst") for year in range(2005, 2023) for month in range(1, 13)
     #         if not ((year==2005) and (month != 12))]
-    # n_processors = 10
-    # n_readers = 20
+    # fout = "F:\\conspiracy_filtered.jsonl"
     #
-    # go(fins=fins,fout=fout,funcs=funcs,n_readers=n_readers,n_processors=n_processors,queue_size=queue_size)
+    # go(fins=fins,fout=fout,funcs=funcs, n_readers=-1)
+
+    load_dotenv()
+    base_path = os.environ['base_path']
+    # set up processing functions
+    subreddit_fname = os.environ['subreddit_fname']
+    subs = list()
+    with open(subreddit_fname, encoding='utf8') as f:
+        for l in f:
+            subs.append(l.split('\t')[0])
+    subs = set(subs)
+    funcs = [
+        (keep_contribution, dict(fields_and_values={"subreddit": subs})),
+        # (keep_fields, {'fields': set(['id', 'subreddit', 'title'])}),
+        (keep_fields, {'fields': set(['id', 'subreddit', 'body'])}),
+        (clean_text, dict(text_field='body',
+                          remove_punct=True, remove_digit=True, remove_stops=False, remove_pron=False,
+                          lemmatize=False, lowercase=True
+                          ))
+    ]
+
+    queue_size = 10 ** 6
+
+    for year in range(2017, 2018):
+        for month in range(1, 13):
+            if ((year==2005) and (month != 12)):
+                continue
+            else:
+
+                # fout = os.environ['fout']
+                # fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for year in range(2017, 2018) for month in range(1, 13)
+                #         if not ((year==2005) and (month != 12))]
+                fin = os.path.join(base_path, f"RC_{year}-{month:02}.zst")
+                fout = f"F:\\RC_{year}-{month:02}.njson"
+                n_processors = 20
+                n_readers = -1
+
+                go(fins=[fin],fout=fout,funcs=funcs,n_readers=n_readers,n_processors=n_processors,queue_size=queue_size)
 
 if __name__ == '__main__':
     main()

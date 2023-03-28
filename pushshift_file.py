@@ -1,10 +1,14 @@
+import gzip
 import io
 import json
+import os
 import queue
 from abc import ABC, abstractmethod
+from gzip import GzipFile
 from json import JSONDecodeError
 from copy import deepcopy
 from multiprocessing import Queue, Process, Event, Pool, Manager
+from typing import Callable, Optional
 
 from tqdm import tqdm
 
@@ -45,7 +49,7 @@ class Reader(ABC, Process):
         except Exception as e:
             print('error in closing the barrier')
             print(e)
-    def join(self, timeout: float | None = None) -> None:
+    def join(self, timeout: Optional[float] = None) -> None:
         self.stop_event.wait(timeout=timeout)
 
 
@@ -140,6 +144,8 @@ class JsonlFileWriter(Writer):
 
     def __init__(self, in_queue: Queue, fpath: str):
         super(JsonlFileWriter, self).__init__(in_queue, fpath)
+        if self.fpath is not None:
+            self.fhandle = open(self.fpath, 'w+', encoding='utf8')
 
     def write(self, item, **args):
         self.fhandle.write(json.dumps(item, sort_keys=True) + '\n')
@@ -149,30 +155,46 @@ class JsonlFileWriter(Writer):
         self.fhandle.close()
         print('closed writer')
 
-    def collect_items(self):
-        self.fhandle = open(self.fpath, 'w+', encoding='utf8')
-        super(JsonlFileWriter, self).collect_items()
-        print('items collected')
+    # def collect_items(self):
+    #     super(JsonlFileWriter, self).collect_items()
+    #     print('items collected')
 
 
 class MultiJsonlFileWriter(JsonlFileWriter):
-    def __init__(self, in_queue: Queue, fpaths_and_filters: dict, multiple_writes_per_item: bool = False):
-        self.stop_event = Event()
-        self.multiple_writes_per_item = multiple_writes_per_item
-        self.fpaths_and_filters = deepcopy(fpaths_and_filters)
-        self.fhandles = {k: open(k, 'a+', encoding="utf8") for k in fpaths_and_filters}
-        self.in_queue = in_queue
+    def __init__(self, in_queue: Queue, fpaths_func: Callable[[dict], str], fpath: str = None):
+        super(MultiJsonlFileWriter, self).__init__(in_queue, fpath)
+        # self.stop_event = Event()
+        self.fpaths_func = fpaths_func
+        # self.multiple_writes_per_item = multiple_writes_per_item
+        # self.fhandles = {k: open(k, 'a+', encoding="utf8") for k in self.fpaths_and_filters}
+        self.fhandles = dict()
+        # self.in_queue = in_queue
+
+    def open(self, fpath):
+        if fpath not in self.fhandles:
+            print(fpath)
+            self.fhandles[fpath] = open(fpath, 'a+', encoding="utf8")
+        self.fhandle = self.fhandles[fpath]
 
     def write(self, item, **args):
-        for k, f in self.fpaths_and_filters.items():
-            if f(item):
-                self.fhandles[k].write(json.dumps(item, sort_keys=True) + '\n')
-                if not self.multiple_writes_per_item:
-                    break
+        fpaths = self.fpaths_func(item)
+        for fpath in fpaths:
+            self.open(fpath)
+            super(MultiJsonlFileWriter, self).write(item)
 
     def close_writer(self):
         for fh in self.fhandles.values():
             fh.close()
+
+class MultiGzipJsonFileWriter(MultiJsonlFileWriter):
+    def open(self, fpath):
+        if fpath not in self.fhandles:
+            self.fhandles[fpath] = gzip.open(fpath, 'wt+', encoding="utf8")
+        self.fhandle = self.fhandles[fpath]
+
+
+def fout_func(item):
+    return [f"RC_subreddit\\RC_{item['subreddit']}.jsonl.gz"]
 
 
 def main():
@@ -193,22 +215,33 @@ def main():
     # rp2.join()
     # wp.stop()
     # wp.join()
+    #
+    # print('finished with two processes')
+    #
+    # fpaths = [f'E:\\pushshift\\RS_2009-{m:02d}.zst' for m in range(1, 13)]
+    # q = Queue()
+    # readers = [ZstdFileReader(out_queue=q, fpath=fin) for fin in fpaths]
+    # wp=DummyWriter(in_queue=q, fpath=fout)
+    # for reader in readers:
+    #     reader.start()
+    # wp.start()
+    # for reader in readers:
+    #     reader.join()
+    # wp.stop()
+    # wp.join()
+    # print('finished with multiple processes')
 
-    print('finished with two processes')
-
-    fpaths = [f'E:\\pushshift\\RS_2009-{m:02d}.zst' for m in range(1, 13)]
+    fin = 'C:\\Users\\matti\\Downloads\\reddit\\comments\\RC_2006-12.zst'
+    os.makedirs('RC_subreddit', exist_ok=True)
     q = Queue()
-    readers = [ZstdFileReader(out_queue=q, fpath=fin) for fin in fpaths]
-    wp=DummyWriter(in_queue=q, fpath=fout)
-    for reader in readers:
-        reader.start()
+    reader = ZstdFileReader(out_queue=q, fpath=fin)
+    wp=MultiGzipJsonFileWriter(in_queue=q, fpaths_func=fout_func)
+    reader.start()
     wp.start()
-    for reader in readers:
-        reader.join()
+    reader.join()
     wp.stop()
     wp.join()
-    print('finished with multiple processes')
-
+    print('finished with rotating writes')
 
 
     # fout = 'E:\\pushshift\\RS_test.jsonl'

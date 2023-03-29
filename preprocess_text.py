@@ -7,7 +7,10 @@ import spacy
 
 __parser = None
 spacy_stopwords = None  # depends on the parser, should `load_spacy` before use
-
+try:
+    spacy.require_gpu()
+except:
+    print('no gpu support for spacy')
 
 def load_spacy(model_name='en_core_web_lg'):
     global __parser

@@ -1,3 +1,4 @@
+import multiprocessing
 import os
 import queue
 from abc import ABC, abstractmethod
@@ -7,6 +8,8 @@ from preprocess_text import doc2token
 from pushshift_file import JsonlFileWriter, ZstdFileParallelReader, ZstdFileReader
 
 from dotenv import load_dotenv
+# import dill as pickle
+from dill import pickle
 
 class Processor(ABC, Process):
     def __init__(self, qin: Queue, qout: Queue):
@@ -128,11 +131,11 @@ def go(fins,fout,funcs,n_readers=20, n_processors = 10,queue_size=10 ** 6):
     wp = JsonlFileWriter(in_queue=q_from_process, fpath=fout)
 
     # start everything
+    wp.start()
     for reader in readers:
         reader.start()
     for processor in processors:
         processor.start()
-    wp.start()
 
     # wait for readers to stop and signal processors
     for reader in readers:
@@ -161,9 +164,10 @@ def main():
     # go(fins=fins,fout=fout,funcs=funcs, n_readers=-1)
 
     load_dotenv()
-    base_path = os.environ['base_path']
+
+    base_path = os.environ['base_path'.upper()]
     # set up processing functions
-    subreddit_fname = os.environ['subreddit_fname']
+    subreddit_fname = os.environ['subreddit_fname'.upper()]
     subs = list()
     with open(subreddit_fname, encoding='utf8') as f:
         for l in f:
@@ -173,29 +177,44 @@ def main():
         (keep_contribution, dict(fields_and_values={"subreddit": subs})),
         # (keep_fields, {'fields': set(['id', 'subreddit', 'title'])}),
         (keep_fields, {'fields': set(['id', 'subreddit', 'body'])}),
-        (clean_text, dict(text_field='body',
-                          remove_punct=True, remove_digit=True, remove_stops=False, remove_pron=False,
-                          lemmatize=False, lowercase=True
-                          ))
+        # (clean_text, dict(text_field='body',
+        #                   remove_punct=True, remove_digit=True, remove_stops=False, remove_pron=False,
+        #                   lemmatize=False, lowercase=True
+        #                   ))
     ]
 
-    queue_size = 10 ** 6
+    queue_size = 10 ** 4
 
-    for year in range(2017, 2018):
-        for month in range(1, 13):
-            if ((year==2005) and (month != 12)):
-                continue
-            else:
-
-                # fout = os.environ['fout']
-                # fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for year in range(2017, 2018) for month in range(1, 13)
-                #         if not ((year==2005) and (month != 12))]
-                fin = os.path.join(base_path, f"RC_{year}-{month:02}.zst")
-                fout = f"F:\\RC_{year}-{month:02}.njson"
-                n_processors = 20
-                n_readers = -1
-
-                go(fins=[fin],fout=fout,funcs=funcs,n_readers=n_readers,n_processors=n_processors,queue_size=queue_size)
+    for year in range(2005, 2012):
+        fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for month in range(1, 13)
+                if not ((year == 2005) and (month != 12))]
+        # fout = os.environ['fout']
+        # fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for year in range(2017, 2018) for month in range(1, 13)
+        #         if not ((year==2005) and (month != 12))]
+        # fin = os.path.join(base_path, f"RC_{year}-{month:02}.zst")
+        fout = f"RC_{year}.njson"
+        n_processors = 1
+        n_readers = 4
+        # multiprocessing.set_start_method("spawn")
+        # multiprocessing.freeze_support()
+        go(fins=fins, fout=fout, funcs=funcs, n_readers=n_readers, n_processors=n_processors, queue_size=queue_size)
+        # for month in range(1, 13):
+        #     if ((year==2005) and (month != 12)):
+        #         continue
+        #     else:
+        #
+        #         fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for month in range(1, 13)
+        #                 if not ((year==2005) and (month != 12))]
+        #         # fout = os.environ['fout']
+        #         # fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for year in range(2017, 2018) for month in range(1, 13)
+        #         #         if not ((year==2005) and (month != 12))]
+        #         # fin = os.path.join(base_path, f"RC_{year}-{month:02}.zst")
+        #         fout = f"F:\\RC_{year}.njson"
+        #         n_processors = 8
+        #         n_readers = 3
+        #         go(fins=[fins],fout=fout,funcs=funcs,n_readers=n_readers,n_processors=n_processors,queue_size=queue_size)
+        #
+        #         # go(fins=[fin],fout=fout,funcs=funcs,n_readers=n_readers,n_processors=n_processors,queue_size=queue_size)
 
 if __name__ == '__main__':
     main()

@@ -7,9 +7,9 @@ from abc import ABC, abstractmethod
 from gzip import GzipFile
 from json import JSONDecodeError
 from copy import deepcopy
-from multiprocessing import Queue, Process, Event, Pool, Manager
+from multiprocessing import Queue, Process, Event, Manager, Pool
 from typing import Callable, Optional
-
+# from multiprocessing.dummy import Pool
 from tqdm import tqdm
 
 import zstandard as zstd
@@ -144,10 +144,10 @@ class JsonlFileWriter(Writer):
 
     def __init__(self, in_queue: Queue, fpath: str):
         super(JsonlFileWriter, self).__init__(in_queue, fpath)
-        if self.fpath is not None:
-            self.fhandle = open(self.fpath, 'w+', encoding='utf8')
 
     def write(self, item, **args):
+        if self.fpath is not None:
+            self.fhandle = open(self.fpath, 'w+', encoding='utf8')
         self.fhandle.write(json.dumps(item, sort_keys=True) + '\n')
 
     def close_writer(self):

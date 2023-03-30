@@ -14,6 +14,47 @@ from tqdm import tqdm
 
 import zstandard as zstd
 
+ZST_NUM_BYTES = 2 ** 32
+
+EXTRA_BUFFER=2**10
+def decompress_by_chunk(infile):
+    zst_num_bytes = ZST_NUM_BYTES
+    dctx = zstd.ZstdDecompressor(max_window_size=2147483648)
+    with dctx.stream_reader(infile) as reader:
+        buffer = b""
+        while True:
+            chunk = reader.read(zst_num_bytes)
+            if not chunk:
+                break
+            yield buffer+chunk
+            buffer = chunk[-EXTRA_BUFFER:]
+def decode(chunk, keep_prefix=True, encoding='utf-8', max_retries=4):
+    retries_left=max_retries
+    while retries_left>0:
+        try:
+            return chunk.decode(encoding)
+        except UnicodeDecodeError as e:
+            chunk = keep_prefix and chunk[:-1] or chunk[1:]
+            retries_left-=1
+            if retries_left<=0:
+                raise e
+
+def decode_chunk(chunk):
+    previous_line=''
+    if len(chunk) != ZST_NUM_BYTES: # TODO: should handle also the case of the last chunk; this is assuming that the last chunk won't be exactly the size of the first
+        prefix = decode(chunk[:EXTRA_BUFFER], keep_prefix=False)
+        chunk=chunk[EXTRA_BUFFER:]
+        # check that this does not end with a complete line
+        if not prefix.endswith('\n'):
+            previous_line = prefix.split("\n")[-1]
+        # else:
+        #     print("prefix: ",prefix)
+    string_data = previous_line+decode(chunk, keep_prefix=True)
+    lines = string_data.split("\n")
+    #check that this does not end with a complete line
+    if not string_data.endswith('\n'):
+        lines=lines[:-1]
+    yield from lines
 
 def decompress(fh):
     reader = zstd.ZstdDecompressor(max_window_size=2147483648).stream_reader(fh)
@@ -61,6 +102,14 @@ class JsonlFileReader(Reader):
             for line in f:
                 if (line is not None) and len(line.strip()):
                     self.forward_item(json.loads(line))
+
+
+class ZstdFileChunkReader(JsonlFileReader):
+    def read(self, **args):
+        print(f"reading {self.fpath}")
+        with open(self.fpath, 'rb') as fh:
+            for chunk in decompress_by_chunk(fh):
+                self.forward_item(chunk)
 
 
 class ZstdFileReader(JsonlFileReader):

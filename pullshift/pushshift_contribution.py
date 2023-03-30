@@ -1,12 +1,15 @@
+import json
 import os
 import queue
 from abc import ABC, abstractmethod
+from json import JSONDecodeError
 from multiprocessing import Process, Queue, Event, Manager
 
 from dotenv import load_dotenv
 
 from pullshift.preprocess_text import text2tokens, clean_items
-from pullshift.pushshift_file import JsonlFileWriter, ZstdFileParallelReader, ZstdFileReader
+from pullshift.pushshift_file import JsonlFileWriter, ZstdFileParallelReader, \
+    ZstdFileReader, decode_chunk, ZstdFileChunkReader, DummyWriter
 
 
 class Processor(ABC, Process):
@@ -160,7 +163,27 @@ class SpacyProcessor(Processor):
     def process_item(self, item):
         pass
 
-
+class JsonProcessor(Processor):
+    def process_items(self):
+        done = False
+        while not done:
+            try:
+                chunk = self.qin.get(timeout=1)
+                for line in decode_chunk(chunk=chunk):
+                    try:
+                        processed = json.loads(line)
+                        if processed is not None:
+                            self.qout.put(processed)
+                    except JSONDecodeError as e:
+                        if line and len(line.strip()):
+                            print(f'error decoding json object from {line}')
+            except queue.Empty as e:  # queue closed
+                if self.stop_event_in.is_set():
+                    done = True
+                else:
+                    pass
+    def process_item(self, item):
+        pass
 def go(fins, fout, funcs, n_readers=20, n_processors=10, queue_size=10 ** 6):
     # set up readers
     if n_readers > 1:
@@ -243,7 +266,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # main()
 
     # # spacy parallel processing
     # qin = Queue()
@@ -267,3 +290,21 @@ if __name__ == '__main__':
     #             print('done')
     #             done=True
     # spacypr.join()
+
+    # json parallel processing
+    qin = Queue()
+    qout = Queue()
+    reader = ZstdFileChunkReader(qin, "../RS_2008-05.zst")
+    reader.start()
+    jsonprocs = [JsonProcessor(qin,qout) for _ in range(6)]
+    for jsonproc in jsonprocs:
+        jsonproc.start()
+    writer = DummyWriter(qout, None)
+    writer.start()
+    reader.join()
+    for jsonproc in jsonprocs:
+        jsonproc.stop()
+    for jsonproc in jsonprocs:
+        jsonproc.join()
+    writer.stop()
+    writer.join()

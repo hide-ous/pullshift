@@ -1,15 +1,13 @@
-import multiprocessing
 import os
 import queue
 from abc import ABC, abstractmethod
 from multiprocessing import Process, Queue, Event, Manager
 
-from pullshift.preprocess_text import texts2tokens, text2tokens, clean_items
+from dotenv import load_dotenv
+
+from pullshift.preprocess_text import text2tokens, clean_items
 from pullshift.pushshift_file import JsonlFileWriter, ZstdFileParallelReader, ZstdFileReader
 
-from dotenv import load_dotenv
-# import dill as pickle
-from dill import pickle
 
 class Processor(ABC, Process):
     def __init__(self, qin: Queue, qout: Queue):
@@ -47,6 +45,7 @@ class Processor(ABC, Process):
 
     def stop(self):
         self.stop_event_in.set()
+
 
 def normalize_text(item: dict):
     contribution_type = "comment"
@@ -120,7 +119,7 @@ class QueueIterator:
     def __iter__(self):
         return self
 
-    def __next__(self): # Python 2: def next(self)
+    def __next__(self):  # Python 2: def next(self)
         done = False
         while not done:
             try:
@@ -134,8 +133,10 @@ class QueueIterator:
                 else:
                     pass
 
+
 class SpacyProcessor(Processor):
-    def __init__(self, qin: Queue, qout: Queue, text_field, n_processes: int = -1, remove_punct=True, remove_digit=True, remove_stops=True, remove_pron=True, lemmatize=True, lowercase=True,):
+    def __init__(self, qin: Queue, qout: Queue, text_field, n_processes: int = -1, remove_punct=True, remove_digit=True,
+                 remove_stops=True, remove_pron=True, lemmatize=True, lowercase=True, ):
         super(SpacyProcessor, self).__init__(qin=qin, qout=qout)
         self.text_field = text_field
         self.lowercase = lowercase
@@ -145,22 +146,24 @@ class SpacyProcessor(Processor):
         self.remove_digit = remove_digit
         self.remove_punct = remove_punct
         self.n_processes = n_processes
-    def process_items(self):
 
+    def process_items(self):
         for processed in clean_items(item_stream=QueueIterator(self.qin, self.stop_event_in),
-            text_field=self.text_field,
+                                     text_field=self.text_field,
                                      n_process=self.n_processes,
-                                     remove_punct=self.remove_punct, remove_digit=self.remove_digit, remove_stops=self.remove_stops, remove_pron=self.remove_pron,
+                                     remove_punct=self.remove_punct, remove_digit=self.remove_digit,
+                                     remove_stops=self.remove_stops, remove_pron=self.remove_pron,
                                      lemmatize=self.lemmatize, lowercase=self.lowercase,
                                      ):
             self.qout.put(processed)
+
     def process_item(self, item):
         pass
 
 
-def go(fins,fout,funcs,n_readers=20, n_processors = 10,queue_size=10 ** 6):
+def go(fins, fout, funcs, n_readers=20, n_processors=10, queue_size=10 ** 6):
     # set up readers
-    if n_readers>1:
+    if n_readers > 1:
         m = Manager()
         q_to_process = m.Queue(maxsize=queue_size)
         q_from_process = m.Queue()
@@ -200,9 +203,6 @@ def go(fins,fout,funcs,n_readers=20, n_processors = 10,queue_size=10 ** 6):
 
 
 def main():
-
-
-
     load_dotenv()
 
     base_path = os.environ['base_path'.upper()]
@@ -227,7 +227,8 @@ def main():
 
     for year in range(2005, 2012):
         fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for month in range(1, 13)
-                if not ((year == 2005) and (month != 12))]
+                if (not ((year == 2005) and (month != 12)))]
+        fins = [fin for fin in fins if not os.path.exists(fin)] # skip already processed
         # fout = os.environ['fout']
         # fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for year in range(2017, 2018) for month in range(1, 13)
         #         if not ((year==2005) and (month != 12))]
@@ -238,6 +239,7 @@ def main():
         # multiprocessing.set_start_method("spawn")
         # multiprocessing.freeze_support()
         go(fins=fins, fout=fout, funcs=funcs, n_readers=n_readers, n_processors=n_processors, queue_size=queue_size)
+
 
 if __name__ == '__main__':
     main()

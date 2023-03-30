@@ -4,8 +4,8 @@ import queue
 from abc import ABC, abstractmethod
 from multiprocessing import Process, Queue, Event, Manager
 
-from preprocess_text import doc2token
-from pushshift_file import JsonlFileWriter, ZstdFileParallelReader, ZstdFileReader
+from pullshift.preprocess_text import texts2tokens, text2tokens, clean_items
+from pullshift.pushshift_file import JsonlFileWriter, ZstdFileParallelReader, ZstdFileReader
 
 from dotenv import load_dotenv
 # import dill as pickle
@@ -89,12 +89,12 @@ def keep_contribution(item: dict, fields_and_values: dict[str:set[str]]):
 
 def clean_text(item, text_field='text', remove_punct=True, remove_digit=True, remove_stops=True, remove_pron=True,
                lemmatize=True, lowercase=True):
-    item[text_field] = " ".join(doc2token(item[text_field], remove_punct=remove_punct,
-                                          remove_digit=remove_digit,
-                                          remove_stops=remove_stops,
-                                          remove_pron=remove_pron,
-                                          lemmatize=lemmatize,
-                                          lowercase=lowercase, ))
+    item[text_field] = " ".join(text2tokens(item[text_field], remove_punct=remove_punct,
+                                            remove_digit=remove_digit,
+                                            remove_stops=remove_stops,
+                                            remove_pron=remove_pron,
+                                            lemmatize=lemmatize,
+                                            lowercase=lowercase, ))
     return item
 
 
@@ -110,6 +110,53 @@ class Pipeline(Processor):
             else:
                 item = func(item, **args)
         return item
+
+
+class QueueIterator:
+    def __init__(self, qin, stop_event):
+        self.qin = qin
+        self.stop_event = stop_event
+
+    def __iter__(self):
+        return self
+
+    def __next__(self): # Python 2: def next(self)
+        done = False
+        while not done:
+            try:
+                item = self.qin.get(timeout=1)
+                if item is not None:
+                    return item
+            except queue.Empty as e:  # queue closed
+                if self.stop_event.is_set():
+                    done = True
+                    raise StopIteration
+                else:
+                    pass
+
+class SpacyProcessor(Processor):
+    def __init__(self, qin: Queue, qout: Queue, text_field, n_processes: int = -1, remove_punct=True, remove_digit=True, remove_stops=True, remove_pron=True, lemmatize=True, lowercase=True,):
+        super(SpacyProcessor, self).__init__(qin=qin, qout=qout)
+        self.text_field = text_field
+        self.lowercase = lowercase
+        self.lemmatize = lemmatize
+        self.remove_pron = remove_pron
+        self.remove_stops = remove_stops
+        self.remove_digit = remove_digit
+        self.remove_punct = remove_punct
+        self.n_processes = n_processes
+    def process_items(self):
+
+        for processed in clean_items(item_stream=QueueIterator(self.qin, self.stop_event_in),
+            text_field=self.text_field,
+                                     n_process=self.n_processes,
+                                     remove_punct=self.remove_punct, remove_digit=self.remove_digit, remove_stops=self.remove_stops, remove_pron=self.remove_pron,
+                                     lemmatize=self.lemmatize, lowercase=self.lowercase,
+                                     ):
+            self.qout.put(processed)
+    def process_item(self, item):
+        pass
+
 
 def go(fins,fout,funcs,n_readers=20, n_processors = 10,queue_size=10 ** 6):
     # set up readers
@@ -153,15 +200,8 @@ def go(fins,fout,funcs,n_readers=20, n_processors = 10,queue_size=10 ** 6):
 
 
 def main():
-    # subs = ['climateskeptics', 'climatechange', 'science', 'conspiracy', 'conservative', 'moonhoax',
-    #         'flatearth', 'nasa']
-    # funcs = [(keep_contribution, dict(fields_and_values={"subreddit": subs}))]
-    # base_path = "E:\\pushshift"
-    # fins = [os.path.join(base_path, f"RS_{year}-{month:02}.zst") for year in range(2005, 2023) for month in range(1, 13)
-    #         if not ((year==2005) and (month != 12))]
-    # fout = "F:\\conspiracy_filtered.jsonl"
-    #
-    # go(fins=fins,fout=fout,funcs=funcs, n_readers=-1)
+
+
 
     load_dotenv()
 
@@ -198,23 +238,29 @@ def main():
         # multiprocessing.set_start_method("spawn")
         # multiprocessing.freeze_support()
         go(fins=fins, fout=fout, funcs=funcs, n_readers=n_readers, n_processors=n_processors, queue_size=queue_size)
-        # for month in range(1, 13):
-        #     if ((year==2005) and (month != 12)):
-        #         continue
-        #     else:
-        #
-        #         fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for month in range(1, 13)
-        #                 if not ((year==2005) and (month != 12))]
-        #         # fout = os.environ['fout']
-        #         # fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for year in range(2017, 2018) for month in range(1, 13)
-        #         #         if not ((year==2005) and (month != 12))]
-        #         # fin = os.path.join(base_path, f"RC_{year}-{month:02}.zst")
-        #         fout = f"F:\\RC_{year}.njson"
-        #         n_processors = 8
-        #         n_readers = 3
-        #         go(fins=[fins],fout=fout,funcs=funcs,n_readers=n_readers,n_processors=n_processors,queue_size=queue_size)
-        #
-        #         # go(fins=[fin],fout=fout,funcs=funcs,n_readers=n_readers,n_processors=n_processors,queue_size=queue_size)
 
 if __name__ == '__main__':
     main()
+
+    # # spacy parallel processing
+    # qin = Queue()
+    # qout = Queue()
+    # spacypr = SpacyProcessor(qin, qout, 'body')
+    # for doc in [{"body":'one big doc'},
+    #             {"body":'two small doc'},
+    #             {"body":'three dog doc'},
+    #             ]:
+    #     qin.put(doc)
+    #     print('added', doc)
+    # spacypr.start()
+    # spacypr.stop()
+    # done=False
+    # while not done:
+    #     try:
+    #         processed = qout.get(timeout=1)
+    #         print(processed)
+    #     except queue.Empty:
+    #         if spacypr.stop_event_out.is_set():
+    #             print('done')
+    #             done=True
+    # spacypr.join()

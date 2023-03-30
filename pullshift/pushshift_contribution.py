@@ -226,14 +226,15 @@ def main():
     queue_size = 10 ** 4
 
     for year in range(2005, 2012):
+        fout = f"../RC_{year}.njson"
+        if os.path.exists(fout):
+            continue
         fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for month in range(1, 13)
                 if (not ((year == 2005) and (month != 12)))]
-        fins = [fin for fin in fins if not os.path.exists(fin)] # skip already processed
         # fout = os.environ['fout']
         # fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for year in range(2017, 2018) for month in range(1, 13)
         #         if not ((year==2005) and (month != 12))]
         # fin = os.path.join(base_path, f"RC_{year}-{month:02}.zst")
-        fout = f"RC_{year}.njson"
         n_processors = 1
         n_readers = 4
         # multiprocessing.set_start_method("spawn")

@@ -14,9 +14,9 @@ from tqdm import tqdm
 
 import zstandard as zstd
 
-ZST_NUM_BYTES = 2 ** 32
+ZST_NUM_BYTES = 2 ** 22
 
-EXTRA_BUFFER=2**10
+EXTRA_BUFFER=2**20
 def decompress_by_chunk(infile):
     zst_num_bytes = ZST_NUM_BYTES
     dctx = zstd.ZstdDecompressor(max_window_size=2147483648)
@@ -46,9 +46,12 @@ def decode_chunk(chunk):
         chunk=chunk[EXTRA_BUFFER:]
         # check that this does not end with a complete line
         if not prefix.endswith('\n'):
-            previous_line = prefix.split("\n")[-1]
+            previous_lines = prefix.split("\n")
+            if len(previous_lines)>1:
+                previous_line = previous_lines[-1]
         # else:
         #     print("prefix: ",prefix)
+    # print(previous_line)
     string_data = previous_line+decode(chunk, keep_prefix=True)
     lines = string_data.split("\n")
     #check that this does not end with a complete line

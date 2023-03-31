@@ -262,12 +262,12 @@ def main():
     for year in range(2012, 2014):
         fout = f"../RC_{year}.njson"
         fins = list()
-
+        if os.path.exists(fout):
+            continue
         for month in range(1, 13):
             if not ((year == 2005) and (month != 12)):
                 # fout = f"../RC_{year}-{month:02}.njson"
-                if os.path.exists(fout):
-                    continue
+
                 fins.extend([os.path.join(base_path, f"RC_{year}-{month:02}.zst")])
         # fout = os.environ['fout']
         # fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for year in range(2017, 2018) for month in range(1, 13)

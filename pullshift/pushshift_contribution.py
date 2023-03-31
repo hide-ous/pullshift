@@ -254,7 +254,7 @@ def main():
     queue_size = 10 ** 2
     n_processors = 4
 
-    for year in range(2012, 2014):
+    for year in range(2005, 2014):
         fout = f"../RC_{year}.njson"
         fins = list()
         if os.path.exists(fout):
@@ -263,7 +263,7 @@ def main():
             if not ((year == 2005) and (month != 12)):
                 fins.extend([os.path.join(base_path, f"RC_{year}-{month:02}.zst")])
 
-        for fins_ in divide_chunks(fins, 2):
+        for fins_ in divide_chunks(fins, 4):
             go(fins=fins_, fout=fout, funcs=funcs, n_processors=n_processors, queue_size=queue_size)
 
 

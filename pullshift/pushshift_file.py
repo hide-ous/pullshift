@@ -200,12 +200,13 @@ class LineFileWriter(Writer):
 
     def write(self, item, **args):
         if self.fhandle is None:
-            self.fhandle = open(self.fpath, 'w+', encoding='utf8')
+            self.fhandle = open(self.fpath, 'a+', encoding='utf8')
         self.fhandle.write(item + '\n')
 
     def close_writer(self):
         print('closing writer')
-        self.fhandle.close()
+        if self.fhandle is not None:
+            self.fhandle.close()
         print('closed writer')
 
 class JsonlFileWriter(LineFileWriter):

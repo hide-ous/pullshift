@@ -192,24 +192,27 @@ class DummyWriter(Writer):
     def write(self, item, **args):
         pass
 
-class JsonlFileWriter(Writer):
+class LineFileWriter(Writer):
 
     def __init__(self, in_queue: Queue, fpath: str):
-        super(JsonlFileWriter, self).__init__(in_queue, fpath)
+        super(LineFileWriter, self).__init__(in_queue, fpath)
+        self.fhandle = None
 
     def write(self, item, **args):
-        if self.fpath is not None:
+        if self.fhandle is None:
             self.fhandle = open(self.fpath, 'w+', encoding='utf8')
-        self.fhandle.write(json.dumps(item, sort_keys=True) + '\n')
+        self.fhandle.write(item + '\n')
 
     def close_writer(self):
         print('closing writer')
         self.fhandle.close()
         print('closed writer')
 
-    # def collect_items(self):
-    #     super(JsonlFileWriter, self).collect_items()
-    #     print('items collected')
+class JsonlFileWriter(LineFileWriter):
+
+    def write(self, item, **args):
+        super(JsonlFileWriter, self).write(json.dumps(item, sort_keys=True))
+
 
 
 class MultiJsonlFileWriter(JsonlFileWriter):

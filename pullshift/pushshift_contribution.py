@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from pullshift.preprocess_text import text2tokens, clean_items
 from pullshift.pushshift_file import JsonlFileWriter, ZstdFileParallelReader, \
-    ZstdFileReader, decode_chunk, ZstdFileChunkReader, DummyWriter
+    ZstdFileReader, decode_chunk, ZstdFileChunkReader, DummyWriter, LineFileWriter
 
 
 class Processor(ABC, Process):
@@ -88,6 +88,9 @@ def keep_contribution(item: dict, fields_and_values: dict[str:set[str]]):
             return None
     return item
 
+def to_string(item: dict, **args):
+    return json.dumps(item)
+
 
 def clean_text(item, text_field='text', remove_punct=True, remove_digit=True, remove_stops=True, remove_pron=True,
                lemmatize=True, lowercase=True):
@@ -99,19 +102,6 @@ def clean_text(item, text_field='text', remove_punct=True, remove_digit=True, re
                                             lowercase=lowercase, ))
     return item
 
-
-class Pipeline(Processor):
-    def __init__(self, qin: Queue, qout: Queue, funcs: list):
-        super(Pipeline, self).__init__(qin=qin, qout=qout)
-        self.funcs = funcs
-
-    def process_item(self, item):
-        for (func, args) in self.funcs:
-            if item is None:
-                return None
-            else:
-                item = func(item, **args)
-        return item
 
 
 class QueueIterator:
@@ -163,7 +153,7 @@ class SpacyProcessor(Processor):
     def process_item(self, item):
         pass
 
-class JsonProcessor(Processor):
+class ChunkProcessor(Processor):
     def process_items(self):
         done = False
         while not done:
@@ -171,7 +161,8 @@ class JsonProcessor(Processor):
                 chunk = self.qin.get(timeout=1)
                 for line in decode_chunk(chunk=chunk):
                     try:
-                        processed = json.loads(line)
+                        loaded = json.loads(line)
+                        processed = self.process_item(loaded)
                         if processed is not None:
                             self.qout.put(processed)
                     except JSONDecodeError as e:
@@ -183,36 +174,48 @@ class JsonProcessor(Processor):
                 else:
                     pass
     def process_item(self, item):
-        pass
-def go(fins, fout, funcs, n_readers=20, n_processors=10, queue_size=10 ** 6):
-    # set up readers
-    if n_readers > 1:
-        m = Manager()
-        q_to_process = m.Queue(maxsize=queue_size)
-        q_from_process = m.Queue()
-        readers = [ZstdFileParallelReader(out_queue=q_to_process, fpaths=fins, nthreads=n_readers)]
-    else:
-        q_to_process = Queue(maxsize=queue_size)
-        q_from_process = Queue()
-        readers = [ZstdFileReader(out_queue=q_to_process, fpath=fin) for fin in fins]
+        return item
+class Pipeline(Processor):
+    def __init__(self, qin: Queue, qout: Queue, funcs: list):
+        super(Pipeline, self).__init__(qin=qin, qout=qout)
+        self.funcs = funcs
+
+    def process_item(self, item):
+        for (func, args) in self.funcs:
+            if item is None:
+                return None
+            else:
+                item = func(item, **args)
+        return item
+
+class ChunkPipeline(ChunkProcessor,Pipeline):
+    def process_item(self, item):
+        return Pipeline.process_item(self, item)
+
+def go(fins, fout, funcs, n_processors=10, queue_size=10 ** 6):
+
+    m = Manager()
+    q_to_process = m.Queue(maxsize=queue_size)
+    q_from_process = m.Queue()
+    chunkers = [ZstdFileChunkReader(q_to_process, fin) for fin in fins]
 
     # set up processors
-    processors = [Pipeline(q_to_process, q_from_process, funcs=funcs)
+    processors = [ChunkPipeline(q_to_process, q_from_process, funcs=funcs)
                   for _ in range(n_processors)]
 
     # set up writer
-    wp = JsonlFileWriter(in_queue=q_from_process, fpath=fout)
+    wp = LineFileWriter(in_queue=q_from_process, fpath=fout)
 
     # start everything
     wp.start()
-    for reader in readers:
-        reader.start()
+    for chunker in chunkers:
+        chunker.start()
     for processor in processors:
         processor.start()
 
     # wait for readers to stop and signal processors
-    for reader in readers:
-        reader.join()
+    for chunker in chunkers:
+        chunker.join()
     for processor in processors:
         processor.stop()
 
@@ -222,8 +225,16 @@ def go(fins, fout, funcs, n_readers=20, n_processors=10, queue_size=10 ** 6):
     wp.stop()
     wp.join()
 
+
     print('finished!')
 
+
+# Yield successive n-sized
+# chunks from l.
+def divide_chunks(l, n):
+    # looping till length l
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
 
 def main():
     load_dotenv()
@@ -244,29 +255,35 @@ def main():
         #                   remove_punct=True, remove_digit=True, remove_stops=False, remove_pron=False,
         #                   lemmatize=False, lowercase=True
         #                   ))
+        (to_string, dict())
     ]
 
-    queue_size = 10 ** 4
 
-    for year in range(2005, 2012):
+    for year in range(2012, 2014):
         fout = f"../RC_{year}.njson"
-        if os.path.exists(fout):
-            continue
-        fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for month in range(1, 13)
-                if (not ((year == 2005) and (month != 12)))]
+        fins = list()
+
+        for month in range(1, 13):
+            if not ((year == 2005) and (month != 12)):
+                # fout = f"../RC_{year}-{month:02}.njson"
+                if os.path.exists(fout):
+                    continue
+                fins.extend([os.path.join(base_path, f"RC_{year}-{month:02}.zst")])
         # fout = os.environ['fout']
         # fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for year in range(2017, 2018) for month in range(1, 13)
         #         if not ((year==2005) and (month != 12))]
         # fin = os.path.join(base_path, f"RC_{year}-{month:02}.zst")
-        n_processors = 1
-        n_readers = 4
+        queue_size = 10 ** 2
+        n_processors = 4
         # multiprocessing.set_start_method("spawn")
         # multiprocessing.freeze_support()
-        go(fins=fins, fout=fout, funcs=funcs, n_readers=n_readers, n_processors=n_processors, queue_size=queue_size)
+
+        for fins_ in divide_chunks(fins, 2):
+            go(fins=fins_, fout=fout, funcs=funcs, n_processors=n_processors, queue_size=queue_size)
 
 
 if __name__ == '__main__':
-    # main()
+    main()
 
     # # spacy parallel processing
     # qin = Queue()
@@ -291,20 +308,23 @@ if __name__ == '__main__':
     #             done=True
     # spacypr.join()
 
-    # json parallel processing
-    qin = Queue()
-    qout = Queue()
-    reader = ZstdFileChunkReader(qin, "../RS_2008-05.zst")
-    reader.start()
-    jsonprocs = [JsonProcessor(qin,qout) for _ in range(6)]
-    for jsonproc in jsonprocs:
-        jsonproc.start()
-    writer = DummyWriter(qout, None)
-    writer.start()
-    reader.join()
-    for jsonproc in jsonprocs:
-        jsonproc.stop()
-    for jsonproc in jsonprocs:
-        jsonproc.join()
-    writer.stop()
-    writer.join()
+    # # json parallel processing
+    # load_dotenv()
+    #
+    # base_path = os.environ['base_path'.upper()]
+    # qin = Queue()
+    # qout = Queue()
+    # reader = ZstdFileChunkReader(qin, os.path.join(base_path, f"RC_2018-12.zst"))
+    # reader.start()
+    # jsonprocs = [JsonProcessor(qin,qout) for _ in range(6)]
+    # for jsonproc in jsonprocs:
+    #     jsonproc.start()
+    # writer = DummyWriter(qout, None)
+    # writer.start()
+    # reader.join()
+    # for jsonproc in jsonprocs:
+    #     jsonproc.stop()
+    # for jsonproc in jsonprocs:
+    #     jsonproc.join()
+    # writer.stop()
+    # writer.join()

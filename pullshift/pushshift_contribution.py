@@ -8,8 +8,7 @@ from multiprocessing import Process, Queue, Event, Manager
 from dotenv import load_dotenv
 
 from pullshift.preprocess_text import text2tokens, clean_items
-from pullshift.pushshift_file import JsonlFileWriter, ZstdFileParallelReader, \
-    ZstdFileReader, decode_chunk, ZstdFileChunkReader, DummyWriter, LineFileWriter
+from pullshift.pushshift_file import decode_chunk, ZstdFileChunkReader, LineFileWriter
 
 
 class Processor(ABC, Process):
@@ -249,15 +248,11 @@ def main():
     subs = set(subs)
     funcs = [
         (keep_contribution, dict(fields_and_values={"subreddit": subs})),
-        # (keep_fields, {'fields': set(['id', 'subreddit', 'title'])}),
         (keep_fields, {'fields': set(['id', 'subreddit', 'body'])}),
-        # (clean_text, dict(text_field='body',
-        #                   remove_punct=True, remove_digit=True, remove_stops=False, remove_pron=False,
-        #                   lemmatize=False, lowercase=True
-        #                   ))
         (to_string, dict())
     ]
-
+    queue_size = 10 ** 2
+    n_processors = 4
 
     for year in range(2012, 2014):
         fout = f"../RC_{year}.njson"
@@ -266,17 +261,7 @@ def main():
             continue
         for month in range(1, 13):
             if not ((year == 2005) and (month != 12)):
-                # fout = f"../RC_{year}-{month:02}.njson"
-
                 fins.extend([os.path.join(base_path, f"RC_{year}-{month:02}.zst")])
-        # fout = os.environ['fout']
-        # fins = [os.path.join(base_path, f"RC_{year}-{month:02}.zst") for year in range(2017, 2018) for month in range(1, 13)
-        #         if not ((year==2005) and (month != 12))]
-        # fin = os.path.join(base_path, f"RC_{year}-{month:02}.zst")
-        queue_size = 10 ** 2
-        n_processors = 4
-        # multiprocessing.set_start_method("spawn")
-        # multiprocessing.freeze_support()
 
         for fins_ in divide_chunks(fins, 2):
             go(fins=fins_, fout=fout, funcs=funcs, n_processors=n_processors, queue_size=queue_size)

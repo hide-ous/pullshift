@@ -267,13 +267,12 @@ def main():
             go(fins=fins_, fout=fout, funcs=funcs, n_processors=n_processors, queue_size=queue_size)
 
 def bench():
-    "/data/shruti/Reddit/submissions/RS_2024_01.zst"
-    "/data/shruti/pullshift.njson"
-    go(fins=["/home/scomp-shared/Reddit/RS_2020-10.zst"], fout='pullshift.njson', funcs=[
+
+    go(fins=["/data/shruti/Reddit/submissions/RS_2024_01.zst"], fout='pullshift.njson', funcs=[
         (keep_contribution, dict(fields_and_values={"subreddit": set(['climateskeptics', 'climatechange', 'science', 'conspiracy', 'conservative', 'moonhoax',
            'flatearth', 'nasa', 'politics'])})),
         (to_string, dict())
-    ], n_processors=52, queue_size=2**10)
+    ], n_processors=16, queue_size=2**22)
 
 
 if __name__ == '__main__':

@@ -269,7 +269,7 @@ def main():
 def bench():
     "/data/shruti/Reddit/submissions/RS_2024_01.zst"
     "/data/shruti/pullshift.njson"
-    go(fins=["/home/scomp-shared/Reddit/submissions/RS_2020-10.zst"], fout='pullshift.njson', funcs=[
+    go(fins=["/home/scomp-shared/Reddit/RS_2020-10.zst"], fout='pullshift.njson', funcs=[
         (keep_contribution, dict(fields_and_values={"subreddit": set(['climateskeptics', 'climatechange', 'science', 'conspiracy', 'conservative', 'moonhoax',
            'flatearth', 'nasa', 'politics'])})),
         (to_string, dict())

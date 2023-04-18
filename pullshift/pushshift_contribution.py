@@ -2,6 +2,7 @@ import json
 import os
 import queue
 from abc import ABC, abstractmethod
+from builtins import function
 from json import JSONDecodeError
 from multiprocessing import Process, Queue, Event, Manager
 
@@ -124,6 +125,22 @@ class QueueIterator:
                     raise StopIteration
                 else:
                     pass
+
+
+class StreamProcessor(Processor):
+    def __init__(self, qin: Queue, qout: Queue, func: function,  **kwargs ):
+        super(StreamProcessor, self).__init__(qin=qin, qout=qout)
+        self.kwargs = kwargs.copy()
+        self.func = func
+
+    def process_items(self):
+        for processed in self.func(item_stream=QueueIterator(self.qin, self.stop_event_in),
+                                     **self.kwargs
+                                     ):
+            self.qout.put(processed)
+
+    def process_item(self, item):
+        pass
 
 
 class SpacyProcessor(Processor):
@@ -254,7 +271,7 @@ def main():
     queue_size = 10 ** 2
     n_processors = 4
 
-    for year in range(2005, 2014):
+    for year in range(2014, 2019):
         fout = f"../RC_{year}.njson"
         fins = list()
         if os.path.exists(fout):
@@ -276,8 +293,8 @@ def bench():
 
 
 if __name__ == '__main__':
-    # main()
-    bench()
+    main()
+    # bench()
     # # spacy parallel processing
     # qin = Queue()
     # qout = Queue()

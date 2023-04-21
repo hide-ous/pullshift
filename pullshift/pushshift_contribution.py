@@ -297,6 +297,7 @@ def main():
                                               ('RC', 'comments')
                                               )
                                              for month in range(1, 13)]]
+        fins = [f for f in fins if os.path.exists(f)]
 
         # for fins_ in divide_chunks(fins, 12):
         go(fins=fins, fout=fout, funcs=funcs, n_processors=n_processors,

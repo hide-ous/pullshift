@@ -2,7 +2,6 @@ import json
 import os
 import queue
 from abc import ABC, abstractmethod
-from builtins import function
 from json import JSONDecodeError
 from multiprocessing import Process, Queue, Event, Manager
 

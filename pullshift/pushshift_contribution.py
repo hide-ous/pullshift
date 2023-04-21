@@ -130,7 +130,7 @@ class QueueIterator:
 
 
 class StreamProcessor(Processor):
-    def __init__(self, qin: Queue, qout: Queue, func: function, **kwargs):
+    def __init__(self, qin: Queue, qout: Queue, func, **kwargs):
         super(StreamProcessor, self).__init__(qin=qin, qout=qout)
         self.kwargs = kwargs.copy()
         self.func = func

@@ -14,9 +14,9 @@ from tqdm import tqdm
 
 import zstandard as zstd
 
-ZST_NUM_BYTES = 2 ** 22
+ZST_NUM_BYTES = 2 ** 24
 
-EXTRA_BUFFER = 2 ** 20
+EXTRA_BUFFER = 2 ** 22
 
 
 def decompress_by_chunk(infile):

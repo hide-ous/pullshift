@@ -9,7 +9,8 @@ from multiprocessing import Process, Queue, Event, Manager
 from dotenv import load_dotenv
 
 from pullshift.preprocess_text import text2tokens, clean_items
-from pullshift.pushshift_file import decode_chunk, ZstdFileChunkReader, LineFileWriter
+from pullshift.pushshift_file import decode_chunk, ZstdFileChunkReader, \
+    LineFileWriter
 
 
 class Processor(ABC, Process):
@@ -88,20 +89,22 @@ def keep_contribution(item: dict, fields_and_values: dict[str:set[str]]):
             return None
     return item
 
+
 def to_string(item: dict, **args):
     return json.dumps(item)
 
 
-def clean_text(item, text_field='text', remove_punct=True, remove_digit=True, remove_stops=True, remove_pron=True,
+def clean_text(item, text_field='text', remove_punct=True, remove_digit=True,
+               remove_stops=True, remove_pron=True,
                lemmatize=True, lowercase=True):
-    item[text_field] = " ".join(text2tokens(item[text_field], remove_punct=remove_punct,
-                                            remove_digit=remove_digit,
-                                            remove_stops=remove_stops,
-                                            remove_pron=remove_pron,
-                                            lemmatize=lemmatize,
-                                            lowercase=lowercase, ))
+    item[text_field] = " ".join(
+        text2tokens(item[text_field], remove_punct=remove_punct,
+                    remove_digit=remove_digit,
+                    remove_stops=remove_stops,
+                    remove_pron=remove_pron,
+                    lemmatize=lemmatize,
+                    lowercase=lowercase, ))
     return item
-
 
 
 class QueueIterator:
@@ -128,15 +131,16 @@ class QueueIterator:
 
 
 class StreamProcessor(Processor):
-    def __init__(self, qin: Queue, qout: Queue, func: function,  **kwargs ):
+    def __init__(self, qin: Queue, qout: Queue, func: function, **kwargs):
         super(StreamProcessor, self).__init__(qin=qin, qout=qout)
         self.kwargs = kwargs.copy()
         self.func = func
 
     def process_items(self):
-        for processed in self.func(item_stream=QueueIterator(self.qin, self.stop_event_in),
-                                     **self.kwargs
-                                     ):
+        for processed in self.func(
+            item_stream=QueueIterator(self.qin, self.stop_event_in),
+            **self.kwargs
+        ):
             self.qout.put(processed)
 
     def process_item(self, item):
@@ -144,8 +148,10 @@ class StreamProcessor(Processor):
 
 
 class SpacyProcessor(Processor):
-    def __init__(self, qin: Queue, qout: Queue, text_field, n_processes: int = -1, remove_punct=True, remove_digit=True,
-                 remove_stops=True, remove_pron=True, lemmatize=True, lowercase=True, ):
+    def __init__(self, qin: Queue, qout: Queue, text_field,
+                 n_processes: int = -1, remove_punct=True, remove_digit=True,
+                 remove_stops=True, remove_pron=True, lemmatize=True,
+                 lowercase=True, ):
         super(SpacyProcessor, self).__init__(qin=qin, qout=qout)
         self.text_field = text_field
         self.lowercase = lowercase
@@ -157,17 +163,19 @@ class SpacyProcessor(Processor):
         self.n_processes = n_processes
 
     def process_items(self):
-        for processed in clean_items(item_stream=QueueIterator(self.qin, self.stop_event_in),
-                                     text_field=self.text_field,
-                                     n_process=self.n_processes,
-                                     remove_punct=self.remove_punct, remove_digit=self.remove_digit,
-                                     remove_stops=self.remove_stops, remove_pron=self.remove_pron,
-                                     lemmatize=self.lemmatize, lowercase=self.lowercase,
-                                     ):
+        for processed in clean_items(
+            item_stream=QueueIterator(self.qin, self.stop_event_in),
+            text_field=self.text_field,
+            n_process=self.n_processes,
+            remove_punct=self.remove_punct, remove_digit=self.remove_digit,
+            remove_stops=self.remove_stops, remove_pron=self.remove_pron,
+            lemmatize=self.lemmatize, lowercase=self.lowercase,
+        ):
             self.qout.put(processed)
 
     def process_item(self, item):
         pass
+
 
 class ChunkProcessor(Processor):
     def process_items(self):
@@ -189,8 +197,11 @@ class ChunkProcessor(Processor):
                     done = True
                 else:
                     pass
+
     def process_item(self, item):
         return item
+
+
 class Pipeline(Processor):
     def __init__(self, qin: Queue, qout: Queue, funcs: list):
         super(Pipeline, self).__init__(qin=qin, qout=qout)
@@ -204,17 +215,20 @@ class Pipeline(Processor):
                 item = func(item, **args)
         return item
 
-class ChunkPipeline(ChunkProcessor,Pipeline):
+
+class ChunkPipeline(ChunkProcessor, Pipeline):
     def process_item(self, item):
         return Pipeline.process_item(self, item)
 
-def go(fins, fout, funcs, n_processors=10, queue_size=10 ** 6):
 
+def go(fins, fout, funcs, n_processors=10, queue_size=10 ** 6):
     m = Manager()
     q_to_process = m.Queue(maxsize=queue_size)
     q_from_process = m.Queue()
     chunkers = [ZstdFileChunkReader(q_to_process, fin) for fin in fins]
 
+    if (n_processors is None) or (n_processors <= 0):
+        n_processors = os.cpu_count()
     # set up processors
     processors = [ChunkPipeline(q_to_process, q_from_process, funcs=funcs)
                   for _ in range(n_processors)]
@@ -241,7 +255,6 @@ def go(fins, fout, funcs, n_processors=10, queue_size=10 ** 6):
     wp.stop()
     wp.join()
 
-
     print('finished!')
 
 
@@ -252,10 +265,12 @@ def divide_chunks(l, n):
     for i in range(0, len(l), n):
         yield l[i:i + n]
 
+
 def main():
     load_dotenv()
 
     base_path = os.environ['base_path'.upper()]
+    pushshift_dir = os.environ['PUSHSHIFT_DIR']
     # set up processing functions
     subreddit_fname = os.environ['subreddit_fname'.upper()]
     subs = list()
@@ -268,28 +283,36 @@ def main():
         (keep_fields, {'fields': set(['id', 'subreddit', 'body'])}),
         (to_string, dict())
     ]
-    queue_size = 10 ** 2
-    n_processors = 4
+    queue_size = 10 ** 4
+    n_processors = 20
 
-    for year in range(2014, 2019):
-        fout = f"../RC_{year}.njson"
-        fins = list()
+    for year in range(2005, 2019):
         if os.path.exists(fout):
             continue
-        for month in range(1, 13):
-            if not ((year == 2005) and (month != 12)):
-                fins.extend([os.path.join(base_path, f"RC_{year}-{month:02}.zst")])
+        fins = [os.path.join(pushshift_dir, fname)
+                               for fname in [os.path.join(f'{folder}',
+                                                          f'{contribution}_{year}-{month:02}.zst')
+                                             for (contribution, folder) in
+                                             (('RS', 'submissions'),
+                                              ('RC', 'comments')
+                                              )
+                                             for month in range(1, 13)]]
+        fout = f"../R_{year}.njson"
 
-        for fins_ in divide_chunks(fins, 4):
-            go(fins=fins_, fout=fout, funcs=funcs, n_processors=n_processors, queue_size=queue_size)
+        # for fins_ in divide_chunks(fins, 12):
+        go(fins=fins, fout=fout, funcs=funcs, n_processors=n_processors,
+               queue_size=queue_size)
+
 
 def bench():
-
-    go(fins=["/data/shruti/Reddit/submissions/RS_2024_01.zst"], fout='pullshift.njson', funcs=[
-        (keep_contribution, dict(fields_and_values={"subreddit": set(['climateskeptics', 'climatechange', 'science', 'conspiracy', 'conservative', 'moonhoax',
-           'flatearth', 'nasa', 'politics'])})),
-        (to_string, dict())
-    ], n_processors=16, queue_size=2**22)
+    go(fins=["/data/shruti/Reddit/submissions/RS_2024_01.zst"],
+       fout='pullshift.njson', funcs=[
+            (keep_contribution, dict(fields_and_values={"subreddit": set(
+                ['climateskeptics', 'climatechange', 'science', 'conspiracy',
+                 'conservative', 'moonhoax',
+                 'flatearth', 'nasa', 'politics'])})),
+            (to_string, dict())
+        ], n_processors=16, queue_size=2 ** 22)
 
 
 if __name__ == '__main__':

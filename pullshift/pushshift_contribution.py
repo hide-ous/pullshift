@@ -286,6 +286,7 @@ def main():
     n_processors = 20
 
     for year in range(2005, 2019):
+        fout = f"../R_{year}.njson"
         if os.path.exists(fout):
             continue
         fins = [os.path.join(pushshift_dir, fname)
@@ -296,7 +297,6 @@ def main():
                                               ('RC', 'comments')
                                               )
                                              for month in range(1, 13)]]
-        fout = f"../R_{year}.njson"
 
         # for fins_ in divide_chunks(fins, 12):
         go(fins=fins, fout=fout, funcs=funcs, n_processors=n_processors,

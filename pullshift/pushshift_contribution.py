@@ -280,7 +280,7 @@ def main():
     funcs = [
         (keep_contribution, dict(fields_and_values={"subreddit": subs})),
         (normalize_text, dict()),
-        (keep_fields, {'fields': set(['id', 'subreddit', 'text'])}),
+        (keep_fields, {'fields': set(['fullname', 'subreddit', 'text', 'contribution_type'])}),
         (to_string, dict())
     ]
     queue_size = 10 ** 4

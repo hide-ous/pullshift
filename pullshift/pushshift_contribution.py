@@ -60,7 +60,7 @@ def normalize_text(item: dict, **kwargs):
     item['contribution_type'] = contribution_type
 
     if contribution_type == 'comment':
-        item['text'] = item.pop['body']
+        item['text'] = item.pop('body')
     elif contribution_type == 'selftext_submission':
         item['text'] = "\n".join([item.pop('title'), item.pop('selftext')])
     elif contribution_type == 'link_submission':

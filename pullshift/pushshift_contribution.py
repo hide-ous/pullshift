@@ -50,7 +50,7 @@ class Processor(ABC, Process):
         self.stop_event_in.set()
 
 
-def normalize_text(item: dict):
+def normalize_text(item: dict, **kwargs):
     contribution_type = "comment"
     if 'is_self' in item:
         if item['is_self']:
@@ -279,7 +279,8 @@ def main():
     subs = set(subs)
     funcs = [
         (keep_contribution, dict(fields_and_values={"subreddit": subs})),
-        (keep_fields, {'fields': set(['id', 'subreddit', 'body'])}),
+        (normalize_text, dict()),
+        (keep_fields, {'fields': set(['id', 'subreddit', 'text'])}),
         (to_string, dict())
     ]
     queue_size = 10 ** 4
